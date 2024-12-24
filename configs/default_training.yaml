@@ -1,0 +1,84 @@
+# Training Configuration
+training:
+  # Algorithm configuration
+  algorithm: "PPO"    # Proximal Policy Optimization
+  total_timesteps: 2500000
+
+  # Network architecture
+  policy:
+    type: "MlpPolicy"
+    net_arch:
+      pi: [64, 64]   # Policy network
+      vf: [64, 64]   # Value function network
+    activation_fn: "ReLU"
+
+  # PPO specific parameters
+  hyperparameters:
+    learning_rate: 3.0e-4
+    n_steps: 1024
+    batch_size: 64
+    n_epochs: 10
+    gamma: 0.99           # Discount factor
+    gae_lambda: 0.95      # GAE parameter
+    clip_range: 0.2
+    clip_range_vf: null
+    normalize_advantage: true
+    ent_coef: 0.01        # Entropy coefficient
+    vf_coef: 0.5          # Value function coefficient
+    max_grad_norm: 0.5
+
+  # Training schedule
+  curriculum:
+    enabled: true
+    stages:
+      - steps: 500000     # First 500k steps
+        env_config:
+          physics:
+            wind:
+              enabled: false
+            drag:
+              enabled: true
+      - steps: 1000000    # Next 1M steps
+        env_config:
+          physics:
+            wind:
+              enabled: true
+              base_magnitude: 0.5
+      - steps: 1000000    # Final 1M steps
+        env_config:
+          physics:
+            wind:
+              enabled: true
+              base_magnitude: 1.0
+
+  # Evaluation settings
+  evaluation:
+    eval_freq: 10000      # Evaluate every N steps
+    n_eval_episodes: 10   # Number of evaluation episodes
+    render: false         # Render evaluation episodes
+
+  # Checkpoint settings
+  checkpoints:
+    save_freq: 50000      # Save every N steps
+    save_path: "models/checkpoints"
+    keep_last: 5          # Keep last N checkpoints
+
+  # Logging configuration
+  logging:
+    log_path: "logs/training_logs"
+    tensorboard: true
+    log_interval: 1000    # Log every N steps
+
+    # Metrics to track
+    metrics:
+      - "reward"
+      - "episode_length"
+      - "height_error"
+      - "energy_usage"
+      - "stability"
+
+    # Video recording
+    video:
+      enabled: false
+      freq: 50000         # Record every N steps
+      length: 1000        # Frames per video

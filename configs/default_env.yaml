@@ -1,0 +1,63 @@
+# Default Environment Configuration
+environment:
+  simulation:
+    time_step: 0.02        # 50Hz simulation
+    max_steps: 1000        # Maximum episode length
+    render_fps: 30         # Rendering frame rate
+
+  drone:
+    mass: 0.7             # Total mass in kg
+    dimensions: [0.2, 0.2, 0.1]  # Size in meters [length, width, height]
+    target_height: 1.0    # Target hover height in meters
+
+    rotors:
+      count: 4
+      mass: 0.05          # Mass per rotor in kg
+      max_thrust: 2.58    # Maximum thrust per rotor in N
+      radius: 0.02        # Rotor radius in meters
+      height: 0.005       # Rotor height in meters
+      positions:          # Rotor positions relative to body center
+        - [0.08, 0.08, 0.51]   # Front Right
+        - [-0.08, 0.08, 0.51]  # Front Left
+        - [-0.08, -0.08, 0.51] # Rear Left
+        - [0.08, -0.08, 0.51]  # Rear Right
+      colors:             # RGBA colors for rotors
+        - [1.0, 0.0, 0.0, 0.8] # Red
+        - [0.0, 1.0, 0.0, 0.8] # Green
+        - [1.0, 1.0, 0.0, 0.8] # Yellow
+        - [1.0, 0.5, 0.0, 0.8] # Orange
+
+  physics:
+    gravity: -9.81        # Gravitational acceleration
+    debug: false          # Enable debug visualization
+
+    # Wind configuration
+    wind:
+      enabled: false
+      base_magnitude: 1.0  # Base wind force in N
+      variability: 0.2    # Random variation (0-1)
+      gustiness: 0.1      # Gust frequency (0-1)
+
+    # Drag configuration
+    drag:
+      enabled: true
+      coefficient: 0.5    # Drag coefficient
+      reference_area: 0.1 # Reference area in m²
+
+    # Collision configuration
+    collision:
+      margin: 0.02       # Collision detection margin
+      enabled: true
+
+  camera:
+    distance: 2.0        # Camera distance from target
+    yaw: 45             # Camera yaw angle
+    pitch: -30          # Camera pitch angle
+    target: [0, 0, 0]   # Camera target position
+
+  visualization:
+    show_gui: false     # Show PyBullet GUI elements
+    show_debug: false   # Show debug visualizations
+    colors:
+      ground: [0.5, 0.5, 0.5, 1.0]  # Ground plane color
+      drone: [0.0, 0.0, 1.0, 0.8]   # Drone body color
