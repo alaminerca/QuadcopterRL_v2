@@ -61,3 +61,37 @@ environment:
     colors:
       ground: [0.5, 0.5, 0.5, 1.0]  # Ground plane color
       drone: [0.0, 0.0, 1.0, 0.8]   # Drone body color
+
+
+# Obstacle configuration
+  obstacles:
+    enabled: true
+    static:
+      walls:
+        - start: [2.0, -2.0, 0.0]
+          end: [2.0, 2.0, 0.0]
+          height: 2.0
+          thickness: 0.1
+          color: [0.7, 0.7, 0.7, 1.0]
+        - start: [-2.0, -2.0, 0.0]
+          end: [-2.0, 2.0, 0.0]
+          height: 2.0
+          thickness: 0.1
+          color: [0.7, 0.7, 0.7, 1.0]
+      boxes:
+        - position: [1.0, 1.0, 0.5]
+          dimensions: [0.3, 0.3, 1.0]
+          color: [0.8, 0.2, 0.2, 1.0]
+
+  dynamic:
+      enabled: false
+      moving_obstacles:
+        - type: "sphere"
+          radius: 0.2
+          mass: 1.0
+          movement:
+            type: "circular"
+            params:
+              center: [0.0, 0.0, 1.0]
+              radius: 1.0
+              frequency: 0.5

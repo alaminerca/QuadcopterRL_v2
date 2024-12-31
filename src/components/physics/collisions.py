@@ -94,6 +94,11 @@ class CollisionManager:
 
         return self.collision_data
 
+    def are_objects_colliding(self, body1: int, body2: int) -> bool:
+        """Check if two objects are colliding"""
+        points = p.getContactPoints(body1, body2)
+        return len(points) > 0
+
     def check_raycast_collision(self, start_pos: List[float],
                                 end_pos: List[float]) -> Optional[Dict]:
         """
