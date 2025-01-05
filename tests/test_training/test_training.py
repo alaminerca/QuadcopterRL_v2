@@ -1,3 +1,4 @@
+# tests/test_training/test_training.py
 """Test module for training system"""
 import pytest
 import yaml
@@ -8,7 +9,15 @@ from src.training.training_manager import TrainingManager
 
 @pytest.fixture
 def test_env_config(tmp_path):
-    """Create temporary environment config file"""
+    """
+    Create temporary environment config file
+
+    Args:
+        tmp_path: Pytest temporary path fixture
+
+    Returns:
+        str: Path to test configuration file
+    """
     config = {
         'environment': {
             'simulation': {
@@ -24,16 +33,42 @@ def test_env_config(tmp_path):
                     'mass': 0.05,
                     'max_thrust': 2.58,
                     'positions': [
-                        [0.1, 0.1, 0.51],
-                        [-0.1, 0.1, 0.51],
-                        [-0.1, -0.1, 0.51],
-                        [0.1, -0.1, 0.51]
+                        [0.08, 0.08, 0.51],   # Front Right
+                        [-0.08, 0.08, 0.51],  # Front Left
+                        [-0.08, -0.08, 0.51], # Rear Left
+                        [0.08, -0.08, 0.51]   # Rear Right
+                    ],
+                    'colors': [
+                        [1.0, 0.0, 0.0, 0.8], # Red
+                        [0.0, 1.0, 0.0, 0.8], # Green
+                        [1.0, 1.0, 0.0, 0.8], # Yellow
+                        [1.0, 0.5, 0.0, 0.8]  # Orange
                     ]
                 }
             },
             'physics': {
                 'gravity': -9.81,
-                'debug': False
+                'debug': False,
+                'wind': {
+                    'enabled': False,
+                    'base_magnitude': 0.0,
+                    'variability': 0.0
+                },
+                'drag': {
+                    'enabled': True,
+                    'coefficient': 0.5
+                }
+            },
+            'obstacles': {
+                'enabled': False,
+                'static': {
+                    'walls': [],
+                    'boxes': []
+                },
+                'dynamic': {
+                    'enabled': False,
+                    'moving_obstacles': []
+                }
             }
         }
     }
@@ -79,10 +114,7 @@ def test_short_training(test_env_config):
         env_config_path=test_env_config
     )
 
-    # Should run without raising exceptions
     trainer.train()
-
-    # Check if model was saved
     assert (trainer.model_dir / "final_model.zip").exists()
 
 
