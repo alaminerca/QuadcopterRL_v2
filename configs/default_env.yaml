@@ -95,3 +95,16 @@ environment:
               center: [0.0, 0.0, 1.0]
               radius: 1.0
               frequency: 0.5
+
+# Add to environment section
+  navigation:
+    enabled: true
+    waypoints:
+      default_radius: 0.5    # Default acceptance radius
+      default_speed: 0.5     # Default target speed (m/s)
+      min_height: 0.5        # Minimum allowed height
+    rewards:
+      waypoint_reached: 10.0  # Reward for reaching waypoint
+      progress: 1.0          # Scale factor for progress reward
+      heading: 0.5           # Scale factor for heading alignment
+      speed: 0.5            # Scale factor for speed matching
