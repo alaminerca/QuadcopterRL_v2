@@ -11,7 +11,24 @@ def waypoint_config():
     return {
         'default_radius': 0.5,
         'default_speed': 0.5,
-        'min_height': 0.5
+        'min_height': 0.5,
+        'use_trajectories': False  # Test base functionality first
+    }
+
+
+@pytest.fixture
+def trajectory_config():
+    """Test configuration with trajectories enabled"""
+    return {
+        'default_radius': 0.5,
+        'default_speed': 0.5,
+        'min_height': 0.5,
+        'use_trajectories': True,
+        'trajectory': {
+            'max_velocity': 2.0,
+            'max_acceleration': 1.0,
+            'curve_resolution': 20
+        }
     }
 
 
@@ -42,13 +59,13 @@ def test_waypoint_update(waypoint_config):
     assert np.isclose(distance, 0.2)
     assert manager.current_index == 0
 
-    # Test stabilizing at waypoint
+    # Test reaching waypoint needs stability
     pos = np.array([0.1, 0.0, 1.0])
     for _ in range(manager.required_stable_steps - 1):
         reached, _ = manager.update(pos)
         assert not reached  # Not enough stable steps yet
 
-    # Now should reach on final step
+    # Final step should reach waypoint
     reached, _ = manager.update(pos)
     assert reached
     assert manager.current_index == 1
@@ -93,5 +110,47 @@ def test_path_progress(waypoint_config):
     for _ in range(manager.required_stable_steps):
         manager.update(pos)
 
-    # After reaching first waypoint should be at 0.5 progress
     assert manager.get_path_progress() == 0.5
+
+
+def test_trajectory_integration(trajectory_config):
+    """Test waypoint manager with trajectory generation"""
+    manager = WaypointManager(trajectory_config)
+
+    # Add waypoints
+    manager.add_waypoint([0.0, 0.0, 1.0])
+    manager.add_waypoint([1.0, 0.0, 1.0])
+    manager.add_waypoint([1.0, 1.0, 1.0])
+
+    # Should have trajectory generator
+    assert manager.trajectory_generator is not None
+
+    # Should generate lookahead points
+    points = manager.get_lookahead_points()
+    assert len(points) > 0
+
+    # Test direction with trajectory
+    direction = manager.get_direction_to_waypoint(np.array([0.0, 0.0, 1.0]))
+    assert np.all(np.abs(direction) <= 1.0)  # Should be normalized
+
+
+def test_trajectory_progress(trajectory_config):
+    """Test progress updates with trajectories"""
+    manager = WaypointManager(trajectory_config)
+
+    # Add waypoints
+    manager.add_waypoint([0.0, 0.0, 1.0])
+    manager.add_waypoint([1.0, 0.0, 1.0])
+
+    # Update with drone following trajectory
+    positions = [
+        [0.0, 0.0, 1.0],
+        [0.2, 0.0, 1.0],
+        [0.4, 0.0, 1.0],
+        [0.6, 0.0, 1.0]
+    ]
+
+    for pos in positions:
+        manager.update(np.array(pos))
+        points = manager.get_lookahead_points()
+        assert len(points) > 0

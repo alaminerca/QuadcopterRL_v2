@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import numpy as np
+from .trajectory_generator import TrajectoryGenerator
 
 
 @dataclass
@@ -55,42 +56,17 @@ class WaypointManager:
         self.stable_count = 0
         self.required_stable_steps = 3
 
-    def update(self, drone_position: np.ndarray) -> Tuple[bool, float]:
-        """
-        Update navigation state based on drone position
-
-        Args:
-            drone_position: Current drone position [x, y, z]
-
-        Returns:
-            Tuple of (waypoint_reached, distance_to_target)
-        """
-        if self.path_completed or not self.waypoints:
-            return False, 0.0
-
-        current_waypoint = self.waypoints[self.current_index]
-        distance = np.linalg.norm(drone_position - current_waypoint.position)
-        self.distance_to_next = distance
-
-        # Check if we're close enough
-        height_diff = abs(drone_position[2] - current_waypoint.position[2])
-        position_ok = (distance < current_waypoint.radius and height_diff < 0.1)
-
-        # Reset stability counter if we're outside tolerance
-        if not position_ok:
-            self.stable_count = 0
-            return False, distance
-
-        # Increment stability counter
-        self.stable_count += 1
-
-        # Check if we've been stable for enough steps
-        if self.stable_count >= self.required_stable_steps:
-            self.stable_count = 0
-            self._advance_waypoint()
-            return True, distance
-
-        return False, distance
+        # Trajectory generation (if enabled)
+        self.use_trajectories = config.get('use_trajectories', False)
+        if self.use_trajectories:
+            trajectory_config = config.get('trajectory', {
+                'max_velocity': 2.0,
+                'max_acceleration': 1.0,
+                'curve_resolution': 20
+            })
+            self.trajectory_generator = TrajectoryGenerator(trajectory_config)
+        else:
+            self.trajectory_generator = None
 
     def add_waypoint(self, position: List[float], radius: Optional[float] = None,
                      heading: Optional[float] = None, speed: Optional[float] = None) -> None:
@@ -112,9 +88,13 @@ class WaypointManager:
 
         # Ensure minimum height
         waypoint.position[2] = max(waypoint.position[2], self.min_height)
-
         self.waypoints.append(waypoint)
         self._update_path_metrics()
+
+        # Update trajectory if enabled
+        if self.use_trajectories and len(self.waypoints) > 1:
+            positions = [wp.position for wp in self.waypoints]
+            self.trajectory_generator.generate_trajectory(positions)
 
     def reset(self) -> None:
         """Reset path following state"""
@@ -122,6 +102,60 @@ class WaypointManager:
         self.path_completed = False
         self.stable_count = 0
         self._update_path_metrics()
+
+        # Reset trajectory if enabled
+        if self.use_trajectories and self.waypoints:
+            positions = [wp.position for wp in self.waypoints]
+            self.trajectory_generator.generate_trajectory(positions)
+
+    def update(self, drone_position: np.ndarray) -> Tuple[bool, float]:
+        """
+        Update navigation state based on drone position
+
+        Args:
+            drone_position: Current drone position [x, y, z]
+
+        Returns:
+            Tuple of (waypoint_reached, distance_to_target)
+        """
+        if self.path_completed or not self.waypoints:
+            return False, 0.0
+
+        # Get current target position
+        if self.use_trajectories:
+            target_pos, _ = self.trajectory_generator.get_current_target()
+        else:
+            target_pos = self.waypoints[self.current_index].position
+
+        # Calculate distance to target
+        distance = np.linalg.norm(drone_position - target_pos)
+        self.distance_to_next = distance
+
+        # Check height and distance requirements
+        current_waypoint = self.waypoints[self.current_index]
+        height_diff = abs(drone_position[2] - current_waypoint.position[2])
+        position_ok = (distance < current_waypoint.radius and height_diff < 0.1)
+
+        # Reset stability counter if outside tolerance
+        if not position_ok:
+            self.stable_count = 0
+            return False, distance
+
+        # Increment stability counter
+        self.stable_count += 1
+
+        # Update trajectory if enabled
+        if self.use_trajectories:
+            progress = self.get_path_progress()
+            self.trajectory_generator.update(dt=0.02, progress=progress)
+
+        # Check if stable enough to advance
+        if self.stable_count >= self.required_stable_steps:
+            self.stable_count = 0
+            self._advance_waypoint()
+            return True, distance
+
+        return False, distance
 
     def get_current_waypoint(self) -> Optional[Waypoint]:
         """
@@ -151,7 +185,7 @@ class WaypointManager:
 
     def get_direction_to_waypoint(self, drone_position: np.ndarray) -> np.ndarray:
         """
-        Get normalized direction vector to current waypoint
+        Get normalized direction vector to current target
 
         Args:
             drone_position: Current drone position [x, y, z]
@@ -159,11 +193,15 @@ class WaypointManager:
         Returns:
             Normalized direction vector [dx, dy, dz]
         """
-        current = self.get_current_waypoint()
-        if current is None:
-            return np.zeros(3)
+        if self.use_trajectories:
+            target_pos, _ = self.trajectory_generator.get_current_target()
+        else:
+            current = self.get_current_waypoint()
+            if current is None:
+                return np.zeros(3)
+            target_pos = current.position
 
-        direction = current.position - drone_position
+        direction = target_pos - drone_position
         norm = np.linalg.norm(direction)
 
         if norm < 1e-6:
@@ -171,12 +209,19 @@ class WaypointManager:
 
         return direction / norm
 
+    def get_lookahead_points(self) -> List[np.ndarray]:
+        """
+        Get lookahead points for visualization
+
+        Returns:
+            List of future trajectory points
+        """
+        if not self.use_trajectories or not self.trajectory_generator:
+            return []
+        return self.trajectory_generator.get_lookahead_points()
+
     def _advance_waypoint(self) -> None:
-        """
-        Advance to next waypoint or complete path.
-        Sets path_completed to True when last waypoint is reached.
-        Updates path metrics after advancing.
-        """
+        """Advance to next waypoint or complete path"""
         if self.current_index + 1 >= len(self.waypoints):
             self.path_completed = True
             return
