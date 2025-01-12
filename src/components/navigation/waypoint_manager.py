@@ -68,6 +68,13 @@ class WaypointManager:
         else:
             self.trajectory_generator = None
 
+        # Initialize visualization if enabled
+        if config.get('visualization', {}).get('enabled', False):
+            from ..visualization.path_visualizer import PathVisualizer
+            self.visualizer = PathVisualizer()
+        else:
+            self.visualizer = None
+
     def add_waypoint(self, position: List[float], radius: Optional[float] = None,
                      heading: Optional[float] = None, speed: Optional[float] = None) -> None:
         """
@@ -96,8 +103,18 @@ class WaypointManager:
             positions = [wp.position for wp in self.waypoints]
             self.trajectory_generator.generate_trajectory(positions)
 
+        # Update visualization
+        if self.visualizer:
+            positions = [wp.position for wp in self.waypoints]
+            current_target = self.get_current_waypoint().position if self.get_current_waypoint() else None
+            self.visualizer.update(
+                waypoints=positions,
+                trajectory_points=self.get_lookahead_points() if self.use_trajectories else None,
+                current_target=current_target
+            )
+
     def reset(self) -> None:
-        """Reset path following state"""
+        """Reset path following state and visualization"""
         self.current_index = 0
         self.path_completed = False
         self.stable_count = 0
@@ -107,6 +124,14 @@ class WaypointManager:
         if self.use_trajectories and self.waypoints:
             positions = [wp.position for wp in self.waypoints]
             self.trajectory_generator.generate_trajectory(positions)
+
+        # Reset visualization
+        if self.visualizer:
+            positions = [wp.position for wp in self.waypoints]
+            self.visualizer.update(
+                waypoints=positions,
+                trajectory_points=self.get_lookahead_points() if self.use_trajectories else None
+            )
 
     def update(self, drone_position: np.ndarray) -> Tuple[bool, float]:
         """
@@ -135,6 +160,15 @@ class WaypointManager:
         current_waypoint = self.waypoints[self.current_index]
         height_diff = abs(drone_position[2] - current_waypoint.position[2])
         position_ok = (distance < current_waypoint.radius and height_diff < 0.1)
+
+        # Update visualization
+        if self.visualizer:
+            positions = [wp.position for wp in self.waypoints]
+            self.visualizer.update(
+                waypoints=positions,
+                trajectory_points=self.get_lookahead_points() if self.use_trajectories else None,
+                current_target=target_pos
+            )
 
         # Reset stability counter if outside tolerance
         if not position_ok:
@@ -219,6 +253,11 @@ class WaypointManager:
         if not self.use_trajectories or not self.trajectory_generator:
             return []
         return self.trajectory_generator.get_lookahead_points()
+
+    def cleanup(self) -> None:
+        """Clean up resources, including visualization"""
+        if self.visualizer:
+            self.visualizer.clear()
 
     def _advance_waypoint(self) -> None:
         """Advance to next waypoint or complete path"""
