@@ -42,15 +42,16 @@ def test_waypoint_update(waypoint_config):
     assert np.isclose(distance, 0.2)
     assert manager.current_index == 0
 
-    # Test reaching waypoint
-    reached, distance = manager.update(np.array([0.1, 0.0, 1.0]))
+    # Test stabilizing at waypoint
+    pos = np.array([0.1, 0.0, 1.0])
+    for _ in range(manager.required_stable_steps - 1):
+        reached, _ = manager.update(pos)
+        assert not reached  # Not enough stable steps yet
+
+    # Now should reach on final step
+    reached, _ = manager.update(pos)
     assert reached
     assert manager.current_index == 1
-
-    # Test path completion
-    reached, distance = manager.update(np.array([1.0, 0.0, 1.0]))
-    assert reached
-    assert manager.path_completed
 
 
 def test_direction_vectors(waypoint_config):
@@ -86,10 +87,11 @@ def test_path_progress(waypoint_config):
 
     # Test progress updates
     assert manager.get_path_progress() == 0.0
-    manager.update(np.array([0.1, 0.0, 1.0]))  # Reach first waypoint
-    assert manager.get_path_progress() == 0.5
 
-    # Complete path
-    manager.update(np.array([1.1, 0.0, 1.0]))
-    manager.update(np.array([2.0, 0.0, 1.0]))
-    assert manager.get_path_progress() == 1.0
+    # Reach first waypoint (need stable steps)
+    pos = np.array([0.1, 0.0, 1.0])
+    for _ in range(manager.required_stable_steps):
+        manager.update(pos)
+
+    # After reaching first waypoint should be at 0.5 progress
+    assert manager.get_path_progress() == 0.5

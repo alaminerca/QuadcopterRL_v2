@@ -51,6 +51,47 @@ class WaypointManager:
         self.total_distance = 0.0
         self.distance_to_next = 0.0
 
+        # Waypoint reaching state
+        self.stable_count = 0
+        self.required_stable_steps = 3
+
+    def update(self, drone_position: np.ndarray) -> Tuple[bool, float]:
+        """
+        Update navigation state based on drone position
+
+        Args:
+            drone_position: Current drone position [x, y, z]
+
+        Returns:
+            Tuple of (waypoint_reached, distance_to_target)
+        """
+        if self.path_completed or not self.waypoints:
+            return False, 0.0
+
+        current_waypoint = self.waypoints[self.current_index]
+        distance = np.linalg.norm(drone_position - current_waypoint.position)
+        self.distance_to_next = distance
+
+        # Check if we're close enough
+        height_diff = abs(drone_position[2] - current_waypoint.position[2])
+        position_ok = (distance < current_waypoint.radius and height_diff < 0.1)
+
+        # Reset stability counter if we're outside tolerance
+        if not position_ok:
+            self.stable_count = 0
+            return False, distance
+
+        # Increment stability counter
+        self.stable_count += 1
+
+        # Check if we've been stable for enough steps
+        if self.stable_count >= self.required_stable_steps:
+            self.stable_count = 0
+            self._advance_waypoint()
+            return True, distance
+
+        return False, distance
+
     def add_waypoint(self, position: List[float], radius: Optional[float] = None,
                      heading: Optional[float] = None, speed: Optional[float] = None) -> None:
         """
@@ -79,6 +120,7 @@ class WaypointManager:
         """Reset path following state"""
         self.current_index = 0
         self.path_completed = False
+        self.stable_count = 0
         self._update_path_metrics()
 
     def get_current_waypoint(self) -> Optional[Waypoint]:
@@ -91,37 +133,6 @@ class WaypointManager:
         if self.path_completed or not self.waypoints:
             return None
         return self.waypoints[self.current_index]
-
-    def update(self, drone_position: np.ndarray) -> Tuple[bool, float]:
-        """
-        Update navigation state based on drone position
-
-        Args:
-            drone_position: Current drone position [x, y, z]
-
-        Returns:
-            Tuple of (waypoint_reached, distance_to_target)
-        """
-        if self.path_completed or not self.waypoints:
-            return False, 0.0
-
-        current_waypoint = self.waypoints[self.current_index]
-        distance = np.linalg.norm(drone_position - current_waypoint.position)
-        self.distance_to_next = distance
-
-        # Check if we're close enough in height first
-        height_diff = abs(drone_position[2] - current_waypoint.position[2])
-        if height_diff > 0.1:  # Strict height requirement
-            return False, distance
-
-        # Then check overall distance
-        if distance >= current_waypoint.radius:
-            return False, distance
-
-        self._advance_waypoint()
-        return True, distance
-
-
 
     def get_path_progress(self) -> float:
         """
