@@ -6,27 +6,29 @@ from scipy.special import comb
 
 
 class BezierCurve:
-    """Bezier curve implementation for smooth trajectories"""
+    """Bezier curve for smooth trajectory generation with height constraints"""
 
-    def __init__(self, control_points: np.ndarray):
+    def __init__(self, control_points: np.ndarray, min_height: float = 0.5):
         """
-        Initialize Bezier curve with control points
+        Initialize Bezier curve
 
         Args:
-            control_points: Array of shape (n, 3) containing control points
+            control_points: Array of control points
+            min_height: Minimum allowed height
         """
         self.control_points = control_points
         self.degree = len(control_points) - 1
+        self.min_height = min_height
 
     def evaluate(self, t: float) -> np.ndarray:
         """
-        Evaluate curve at parameter t
+        Evaluate curve at parameter t with height constraint
 
         Args:
             t: Parameter in range [0, 1]
 
         Returns:
-            Point on curve at parameter t
+            Point on curve with enforced minimum height
         """
         t = np.clip(t, 0.0, 1.0)
         point = np.zeros(3)
@@ -35,6 +37,8 @@ class BezierCurve:
             coeff = comb(self.degree, i) * (t ** i) * ((1 - t) ** (self.degree - i))
             point += coeff * self.control_points[i]
 
+        # Enforce minimum height
+        point[2] = max(point[2], self.min_height)
         return point
 
     def evaluate_derivative(self, t: float) -> np.ndarray:
@@ -48,14 +52,14 @@ class BezierCurve:
             Velocity vector at parameter t
         """
         t = np.clip(t, 0.0, 1.0)
-        velocity = np.zeros(3)
+        derivative = np.zeros(3)
 
+        # For cubic Bezier curves, derivative uses three control point differences
         for i in range(self.degree):
             coeff = self.degree * comb(self.degree - 1, i) * (t ** i) * ((1 - t) ** (self.degree - 1 - i))
-            velocity += coeff * (self.control_points[i + 1] - self.control_points[i])
+            derivative += coeff * (self.control_points[i + 1] - self.control_points[i])
 
-        return velocity
-
+        return derivative
 
 class TrajectoryGenerator:
     """Generates smooth trajectories between waypoints"""
@@ -65,7 +69,7 @@ class TrajectoryGenerator:
         Initialize trajectory generator
 
         Args:
-            config: Configuration dictionary
+            config: Configuration dictionary containing trajectory parameters
         """
         self.config = config
         self.max_velocity = config.get('max_velocity', 2.0)
@@ -76,40 +80,54 @@ class TrajectoryGenerator:
         self.current_curve: Optional[BezierCurve] = None
         self.current_param: float = 0.0
         self.curves: List[BezierCurve] = []
+        self.velocities: List[float] = []
 
-    def generate_trajectory(self, waypoints: List[np.ndarray]) -> None:
+    def generate_trajectory(self, points: List[np.ndarray],
+                            velocities: Optional[List[float]] = None) -> None:
         """
-        Generate smooth trajectory through waypoints
+        Generate smooth trajectory through points with velocity profile
 
         Args:
-            waypoints: List of waypoint positions
+            points: List of path points to follow
+            velocities: Optional list of velocities for each point
         """
-        if len(waypoints) < 2:
+        if len(points) < 2:
             return
 
         self.curves = []
+        self.velocities = velocities if velocities is not None else []
 
-        # Generate control points for each segment
-        for i in range(len(waypoints) - 1):
-            start = waypoints[i]
-            end = waypoints[i + 1]
+        # Only use original waypoints for curves
+        for i in range(len(points) - 1):
+            start = points[i]
+            end = points[i + 1]
 
             # Generate intermediate control points
             direction = end - start
             distance = np.linalg.norm(direction)
             unit_direction = direction / (distance + 1e-6)
 
+            # Adjust control point positions based on velocity if available
+            if velocities and i < len(velocities):
+                v_start = velocities[i]
+                v_end = velocities[min(i + 1, len(velocities) - 1)]
+                start_influence = v_start * distance / 3
+                end_influence = v_end * distance / 3
+            else:
+                start_influence = distance / 3
+                end_influence = distance / 3
+
             # Create control points for cubic Bezier curve
             control_points = np.array([
                 start,
-                start + unit_direction * (distance / 3),
-                end - unit_direction * (distance / 3),
+                start + unit_direction * start_influence,
+                end - unit_direction * end_influence,
                 end
             ])
 
             self.curves.append(BezierCurve(control_points))
 
-        self.current_curve = self.curves[0]
+        self.current_curve = self.curves[0] if self.curves else None
         self.current_param = 0.0
 
     def get_current_target(self) -> Tuple[np.ndarray, np.ndarray]:

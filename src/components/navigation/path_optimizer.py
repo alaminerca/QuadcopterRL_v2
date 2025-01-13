@@ -92,8 +92,12 @@ class PathOptimizer:
         t_smooth = np.linspace(0, 1, num_samples)
 
         smooth_path = []
+        min_z = min(waypoints_array[:, 2])  # Get minimum z-height from waypoints
+
         for t_val in t_smooth:
             point = np.array([spline(t_val) for spline in splines])
+            # Ensure z coordinate is not less than minimum height
+            point[2] = max(point[2], min_z)
             smooth_path.append(point)
 
         return smooth_path

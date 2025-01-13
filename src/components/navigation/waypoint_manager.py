@@ -3,8 +3,12 @@
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import numpy as np
-from .trajectory_generator import TrajectoryGenerator
 
+from .path_optimizer import PathOptimizer
+from .trajectory_generator import TrajectoryGenerator
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Waypoint:
@@ -42,7 +46,7 @@ class WaypointManager:
         self.waypoints: List[Waypoint] = []
         self.current_index: int = 0
         self.path_completed: bool = False
-
+        self.logger = logger  # Initialize class logger
         # Default parameters
         self.default_radius = config.get('default_radius', 0.5)
         self.default_speed = config.get('default_speed', 0.5)
@@ -55,6 +59,7 @@ class WaypointManager:
         # Waypoint reaching state
         self.stable_count = 0
         self.required_stable_steps = 3
+        self.waypoint_just_reached = False  # Track if we just reached a waypoint
 
         # Trajectory generation (if enabled)
         self.use_trajectories = config.get('use_trajectories', False)
@@ -65,8 +70,19 @@ class WaypointManager:
                 'curve_resolution': 20
             })
             self.trajectory_generator = TrajectoryGenerator(trajectory_config)
+
+            # Initialize path optimizer
+            optimizer_config = config.get('optimizer', {
+                'min_distance': 0.5,
+                'max_velocity': trajectory_config['max_velocity'],
+                'max_acceleration': trajectory_config['max_acceleration'],
+                'smoothing_factor': 0.1,
+                'path_resolution': 0.1
+            })
+            self.optimizer = PathOptimizer(optimizer_config)
         else:
             self.trajectory_generator = None
+            self.optimizer = None
 
         # Initialize visualization if enabled
         if config.get('visualization', {}).get('enabled', False):
@@ -86,6 +102,9 @@ class WaypointManager:
             heading: Desired heading (optional)
             speed: Desired speed (optional)
         """
+        # Ensure minimum height for new waypoint
+        position[2] = max(position[2], self.min_height)
+
         waypoint = Waypoint(
             position=np.array(position),
             radius=radius or self.default_radius,
@@ -93,24 +112,18 @@ class WaypointManager:
             speed=speed or self.default_speed
         )
 
-        # Ensure minimum height
-        waypoint.position[2] = max(waypoint.position[2], self.min_height)
         self.waypoints.append(waypoint)
         self._update_path_metrics()
 
-        # Update trajectory if enabled
+        # Generate trajectory between waypoints directly
         if self.use_trajectories and len(self.waypoints) > 1:
+            # Get positions of actual waypoints only
             positions = [wp.position for wp in self.waypoints]
-            self.trajectory_generator.generate_trajectory(positions)
 
-        # Update visualization
-        if self.visualizer:
-            positions = [wp.position for wp in self.waypoints]
-            current_target = self.get_current_waypoint().position if self.get_current_waypoint() else None
-            self.visualizer.update(
-                waypoints=positions,
-                trajectory_points=self.get_lookahead_points() if self.use_trajectories else None,
-                current_target=current_target
+            # Generate trajectory directly between waypoints
+            self.trajectory_generator.generate_trajectory(
+                points=positions,
+                velocities=[wp.speed for wp in self.waypoints]
             )
 
     def reset(self) -> None:
@@ -135,7 +148,7 @@ class WaypointManager:
 
     def update(self, drone_position: np.ndarray) -> Tuple[bool, float]:
         """
-        Update navigation state based on drone position
+        Update navigation state based on drone position.
 
         Args:
             drone_position: Current drone position [x, y, z]
@@ -146,46 +159,31 @@ class WaypointManager:
         if self.path_completed or not self.waypoints:
             return False, 0.0
 
-        # Get current target position
-        if self.use_trajectories:
-            target_pos, _ = self.trajectory_generator.get_current_target()
-        else:
-            target_pos = self.waypoints[self.current_index].position
-
-        # Calculate distance to target
-        distance = np.linalg.norm(drone_position - target_pos)
+        current_waypoint = self.waypoints[self.current_index]
+        distance = np.linalg.norm(drone_position - current_waypoint.position)
         self.distance_to_next = distance
 
-        # Check height and distance requirements
-        current_waypoint = self.waypoints[self.current_index]
+        # Log critical state (only in development/testing)
+        self.logger.debug(f"WP State: idx={self.current_index}, "
+                          f"stable={self.stable_count}/{self.required_stable_steps}, "
+                          f"dist={distance:.3f}")
+
+        # Check position requirements
         height_diff = abs(drone_position[2] - current_waypoint.position[2])
-        position_ok = (distance < current_waypoint.radius and height_diff < 0.1)
+        position_ok = (distance <= current_waypoint.radius and height_diff <= 0.1)
 
-        # Update visualization
-        if self.visualizer:
-            positions = [wp.position for wp in self.waypoints]
-            self.visualizer.update(
-                waypoints=positions,
-                trajectory_points=self.get_lookahead_points() if self.use_trajectories else None,
-                current_target=target_pos
-            )
-
-        # Reset stability counter if outside tolerance
         if not position_ok:
+            if self.stable_count > 0:  # Only log stability resets
+                self.logger.debug("Position lost - resetting stability")
             self.stable_count = 0
             return False, distance
 
-        # Increment stability counter
+        # Increment stability
         self.stable_count += 1
 
-        # Update trajectory if enabled
-        if self.use_trajectories:
-            progress = self.get_path_progress()
-            self.trajectory_generator.update(dt=0.02, progress=progress)
-
-        # Check if stable enough to advance
-        if self.stable_count >= self.required_stable_steps:
-            self.stable_count = 0
+        # Only reach after required_stable_steps updates
+        if self.stable_count > self.required_stable_steps:
+            self.logger.info(f"Waypoint {self.current_index} reached after {self.stable_count} stable updates")
             self._advance_waypoint()
             return True, distance
 
@@ -260,13 +258,16 @@ class WaypointManager:
             self.visualizer.clear()
 
     def _advance_waypoint(self) -> None:
-        """Advance to next waypoint or complete path"""
+        """
+        Advance to next waypoint or complete path.
+        Sets path_completed to True when last waypoint is reached.
+        Updates path metrics after advancing.
+        """
         if self.current_index + 1 >= len(self.waypoints):
             self.path_completed = True
-            return
-
-        self.current_index += 1
-        self._update_path_metrics()
+        else:
+            self.current_index += 1
+            self._update_path_metrics()
 
     def _update_path_metrics(self) -> None:
         """Update path distance metrics"""
