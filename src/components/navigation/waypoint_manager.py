@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import numpy as np
 
+from .collision_avoider import CollisionAvoider
 from .path_optimizer import PathOptimizer
 from .trajectory_generator import TrajectoryGenerator
 import logging
@@ -46,7 +47,8 @@ class WaypointManager:
         self.waypoints: List[Waypoint] = []
         self.current_index: int = 0
         self.path_completed: bool = False
-        self.logger = logger  # Initialize class logger
+        self.logger = logging.getLogger(__name__)
+
         # Default parameters
         self.default_radius = config.get('default_radius', 0.5)
         self.default_speed = config.get('default_speed', 0.5)
@@ -59,7 +61,6 @@ class WaypointManager:
         # Waypoint reaching state
         self.stable_count = 0
         self.required_stable_steps = 3
-        self.waypoint_just_reached = False  # Track if we just reached a waypoint
 
         # Trajectory generation (if enabled)
         self.use_trajectories = config.get('use_trajectories', False)
@@ -84,12 +85,24 @@ class WaypointManager:
             self.trajectory_generator = None
             self.optimizer = None
 
+        # Initialize collision avoidance
+        collision_config = config.get('collision_avoidance', {
+            'safe_distance': 1.0,
+            'max_detection_distance': 3.0,
+            'height_adjust': 0.5
+        })
+        self.collision_avoider = CollisionAvoider(collision_config)
+
         # Initialize visualization if enabled
         if config.get('visualization', {}).get('enabled', False):
             from ..visualization.path_visualizer import PathVisualizer
             self.visualizer = PathVisualizer()
         else:
             self.visualizer = None
+
+        # Temporary avoidance state
+        self.avoiding_collision = False
+        self.avoidance_direction = None
 
     def add_waypoint(self, position: List[float], radius: Optional[float] = None,
                      heading: Optional[float] = None, speed: Optional[float] = None) -> None:
@@ -146,12 +159,15 @@ class WaypointManager:
                 trajectory_points=self.get_lookahead_points() if self.use_trajectories else None
             )
 
-    def update(self, drone_position: np.ndarray) -> Tuple[bool, float]:
+    def update(self, drone_position: np.ndarray, drone_id: int = None, obstacles: List[int] = None) -> Tuple[
+        bool, float]:
         """
-        Update navigation state based on drone position.
+        Update navigation state based on drone position
 
         Args:
             drone_position: Current drone position [x, y, z]
+            drone_id: PyBullet ID of drone (for collision checking)
+            obstacles: List of obstacle IDs to check
 
         Returns:
             Tuple of (waypoint_reached, distance_to_target)
@@ -163,17 +179,29 @@ class WaypointManager:
         distance = np.linalg.norm(drone_position - current_waypoint.position)
         self.distance_to_next = distance
 
-        # Log critical state (only in development/testing)
-        self.logger.debug(f"WP State: idx={self.current_index}, "
-                          f"stable={self.stable_count}/{self.required_stable_steps}, "
-                          f"dist={distance:.3f}")
+        # Check for collisions if IDs provided
+        if drone_id is not None and obstacles:
+            collision_risk, avoid_direction = self.collision_avoider.check_collision_risk(
+                drone_id,
+                drone_position,
+                current_waypoint.position,
+                obstacles,
+                already_avoiding=self.avoiding_collision
+            )
+
+            self.avoiding_collision = collision_risk
+            self.avoidance_direction = avoid_direction if collision_risk else None
+
+            if collision_risk:
+                self.stable_count = 0  # Reset stability when avoiding
+                return False, distance
 
         # Check position requirements
         height_diff = abs(drone_position[2] - current_waypoint.position[2])
         position_ok = (distance <= current_waypoint.radius and height_diff <= 0.1)
 
         if not position_ok:
-            if self.stable_count > 0:  # Only log stability resets
+            if self.stable_count > 0:
                 self.logger.debug("Position lost - resetting stability")
             self.stable_count = 0
             return False, distance
@@ -217,7 +245,7 @@ class WaypointManager:
 
     def get_direction_to_waypoint(self, drone_position: np.ndarray) -> np.ndarray:
         """
-        Get normalized direction vector to current target
+        Get normalized direction vector to current target, considering avoidance
 
         Args:
             drone_position: Current drone position [x, y, z]
@@ -225,6 +253,9 @@ class WaypointManager:
         Returns:
             Normalized direction vector [dx, dy, dz]
         """
+        if self.avoiding_collision and self.avoidance_direction is not None:
+            return self.avoidance_direction
+
         if self.use_trajectories:
             target_pos, _ = self.trajectory_generator.get_current_target()
         else:

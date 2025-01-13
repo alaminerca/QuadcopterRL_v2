@@ -19,12 +19,14 @@ class CollisionAvoider:
 
         # Safety parameters
         self.safe_distance = config.get('safe_distance', 1.0)
+        self.resume_distance = self.safe_distance * 0.8  # Distance to resume normal navigation
         self.max_detection_distance = config.get('max_detection_distance', 3.0)
         self.height_adjust = config.get('height_adjust', 0.5)
 
     def check_collision_risk(self, drone_id: int, drone_position: np.ndarray,
                              target_position: np.ndarray,
-                             obstacles: List[int]) -> Tuple[bool, Optional[np.ndarray]]:
+                             obstacles: List[int],
+                             already_avoiding: bool = False) -> Tuple[bool, Optional[np.ndarray]]:
         """
         Check for potential collisions and get avoidance direction
 
@@ -33,46 +35,46 @@ class CollisionAvoider:
             drone_position: Current drone position
             target_position: Desired target position
             obstacles: List of obstacle IDs to check
+            already_avoiding: Whether currently in avoidance mode
 
         Returns:
             Tuple of (collision_risk, avoidance_direction)
         """
-        # Get direction to target
-        direction = target_position - drone_position
-        distance_to_target = np.linalg.norm(direction)
+        if not obstacles:
+            return False, None
 
-        if distance_to_target > 0:
-            direction = direction / distance_to_target
+        min_distance = float('inf')
+        closest_obstacle_pos = None
 
         # Check each obstacle
         for obstacle_id in obstacles:
-            # Get closest points between drone and obstacle
             closest_points = p.getClosestPoints(
                 bodyA=drone_id,
                 bodyB=obstacle_id,
                 distance=self.max_detection_distance
             )
 
-            if not closest_points:
-                continue
-
-            # Get closest point data
-            for point in closest_points:
+            if closest_points:
+                point = closest_points[0]  # Get first (closest) point
                 contact_distance = point[8]  # distance between objects
 
-                # Check if within safe distance
-                if contact_distance < self.safe_distance:
-                    # Get positions from contact points
-                    drone_contact = np.array(point[5])  # position on drone
-                    obstacle_contact = np.array(point[6])  # position on obstacle
+                print(f"Debug - Distance to obstacle: {contact_distance}, Safe distance: {self.safe_distance}")
 
-                    # Calculate avoidance direction
-                    avoidance = self._get_avoidance_direction(
-                        drone_contact,
-                        obstacle_contact,
-                        target_position
-                    )
-                    return True, avoidance
+                if contact_distance < min_distance:
+                    min_distance = contact_distance
+                    closest_obstacle_pos = np.array(point[6])
+
+        # Use different thresholds for activation and deactivation
+        threshold = self.safe_distance if not already_avoiding else self.resume_distance
+
+        if min_distance < threshold:
+            avoidance = self._get_avoidance_direction(
+                drone_position,
+                closest_obstacle_pos,
+                target_position
+            )
+            print(f"Debug - Avoidance activated, direction: {avoidance}")
+            return True, avoidance
 
         return False, None
 
