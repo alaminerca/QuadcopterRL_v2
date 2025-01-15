@@ -1,0 +1,44 @@
+training:
+  # General training settings
+  total_timesteps: 1000000
+  save_freq: 10000
+  log_freq: 1000
+  eval_freq: 10000
+  n_eval_episodes: 5
+
+  # PPO specific parameters
+  algorithm: "PPO"
+  hyperparameters:
+    learning_rate: 3.0e-4
+    n_steps: 2048
+    batch_size: 64
+    n_epochs: 10
+    gamma: 0.99           # Discount factor
+    gae_lambda: 0.95      # GAE parameter
+    clip_range: 0.2       # PPO clip range
+    ent_coef: 0.01       # Entropy coefficient for exploration
+    vf_coef: 0.5         # Value function coefficient
+    max_grad_norm: 0.5    # Gradient clipping
+
+  # Network architecture
+  policy:
+    type: "MlpPolicy"
+    net_arch:
+      pi: [64, 64]   # Policy network
+      vf: [64, 64]   # Value function network
+    activation_fn: "ReLU"
+
+  # Reward coefficients
+  rewards:
+    waypoint_reached: 10.0    # Reward for reaching waypoint
+    distance: -0.1           # Penalty based on distance to waypoint
+    collision: -10.0         # Penalty for collision
+    stability: 1.0           # Reward for stable flight
+    efficiency: 0.5          # Reward for efficient movement
+
+  # Training environment settings
+  env:
+    max_steps: 1000
+    min_height: 0.5
+    max_velocity: 2.0
+    random_start: true      # Randomize starting positions

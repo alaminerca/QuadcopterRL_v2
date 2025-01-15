@@ -1,20 +1,22 @@
 # src/environments/drone_env.py
 """DroneEnv module that integrates all drone simulation components"""
+# src/environments/drone_env.py
+"""DroneEnv module that integrates all drone simulation components"""
 from typing import Tuple, Dict, Any, Optional, List
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 import pybullet as p
 
-from ..components.drone.drone_body import DroneBody
-from ..components.drone.rotors import RotorSystem
-from ..components.obstacles.obstacle_manager import ObstacleManager, ObstacleConfig
-from ..components.physics.forces import ForceManager
-from ..components.physics.collisions import CollisionManager
-from ..components.navigation.waypoint_manager import WaypointManager
-from .base_env import BaseEnv
+# Replace relative imports with absolute imports
+from src.components.drone.drone_body import DroneBody
+from src.components.drone.rotors import RotorSystem
+from src.components.obstacles.obstacle_manager import ObstacleManager, ObstacleConfig
+from src.components.physics.forces import ForceManager
+from src.components.physics.collisions import CollisionManager
+from src.components.navigation.waypoint_manager import WaypointManager
+from src.environments.base_env import BaseEnv
 import logging
-
 
 class DroneEnv(BaseEnv):
     """
@@ -103,92 +105,79 @@ class DroneEnv(BaseEnv):
         orientation_euler = p.getEulerFromQuaternion(orientation)
 
         # Initialize navigation state
-        waypoint_dir = np.zeros(3)
-        waypoint_dist = 0.0
-        progress = 0.0
+        waypoint_dir = np.zeros(3, dtype=np.float32)
+        waypoint_dist = np.float32(0.0)
+        progress = np.float32(0.0)
 
         # Add navigation state if enabled
         if self.waypoint_manager:
-            waypoint_dir = self.waypoint_manager.get_direction_to_waypoint(np.array(position))
-            _, waypoint_dist = self.waypoint_manager.update(np.array(position))
+            waypoint_dir = self.waypoint_manager.get_direction_to_waypoint(np.array(position, dtype=np.float32))
+            _, waypoint_dist = self.waypoint_manager.update(np.array(position, dtype=np.float32))
             progress = self.waypoint_manager.get_path_progress()
 
-        # Combine into state vector
+        # Convert all components to float32
         state = np.concatenate([
-            position,
-            orientation_euler,
-            linear_vel,
-            angular_vel,
+            np.array(position, dtype=np.float32),
+            np.array(orientation_euler, dtype=np.float32),
+            np.array(linear_vel, dtype=np.float32),
+            np.array(angular_vel, dtype=np.float32),
             waypoint_dir,
-            [waypoint_dist],
-            [progress]
-        ])
+            np.array([waypoint_dist, progress], dtype=np.float32)
+        ]).astype(np.float32)
 
-        return state.astype(np.float32)
+        # Ensure state is 2D for gym
+        return state.reshape(1, -1) if len(state.shape) == 1 else state
+
 
     def compute_reward(self, state: np.ndarray, action: np.ndarray, has_collision: bool) -> float:
         """
         Compute reward based on state, action, and collision status
 
         Args:
-            state: Current state vector
+            state: Current state vector (can be 2D with shape (1, n) or 1D)
             action: Current action vector
             has_collision: Whether collision occurred
 
         Returns:
             float: Computed reward
         """
-        position = state[0:3]
-        waypoint_dist = state[12]  # Index after position, orientation, velocities
-        path_progress = state[13]
+        # Handle 2D state array
+        if state.ndim > 1:
+            state = state.squeeze()
 
-        # Base hover reward
+        # Extract base state components
+        position = state[0:3]
+
+        # Basic height reward
         height_diff = abs(position[2] - self.target_height)
         height_reward = 2.0 / (1.0 + height_diff * 5)
 
-        # Navigation rewards
-        nav_reward = 0.0
-        if self.waypoint_manager:
-            # Waypoint reached reward
-            reached, _ = self.waypoint_manager.update(position)
-            if reached:
-                nav_reward += self.config['navigation']['rewards']['waypoint_reached']
+        # Collision penalty
+        collision_penalty = -10.0 if has_collision else 0.0
 
-            # Progress reward
-            nav_reward += path_progress * self.config['navigation']['rewards']['progress']
-
-            # Distance penalty (transformed to decay from -1 to 0)
-            dist_penalty = -1.0 / (1.0 + np.exp(-0.5 * waypoint_dist))
-            nav_reward += dist_penalty
-
-        # Obstacle penalty
-        obstacle_penalty = 0.0
-        if has_collision:
-            obstacle_penalty = -10.0
-        else:
-            for obstacle_id in self.obstacle_manager.get_all_obstacles():
-                closest_points = self.collision_manager.get_closest_points(
-                    self.drone_id, obstacle_id, max_distance=1.0
-                )
-                if closest_points:
-                    distance = closest_points[0][8]
-                    obstacle_penalty = -5.0 * (1.0 - min(distance, 1.0))
+        # Action smoothness penalty
+        action_penalty = -0.1 * np.sum(np.square(action))
 
         # Combine rewards
-        reward = height_reward + nav_reward + obstacle_penalty
+        reward = height_reward + collision_penalty + action_penalty
 
-        return float(np.clip(reward, -8, 8))
+        return float(np.clip(reward, -10.0, 10.0))
 
     def is_terminated(self, state: np.ndarray) -> bool:
         """
         Check if episode should terminate
 
         Args:
-            state: Current state vector
+            state: Current state vector (can be 2D with shape (1, n) or 1D)
 
         Returns:
             bool: Whether episode should terminate
         """
+        # Handle 2D state array
+        if state.ndim > 1:
+            state = state.squeeze()
+
+        # Extract state components
         position = state[0:3]
         orientation = state[3:6]
 
@@ -197,6 +186,7 @@ class DroneEnv(BaseEnv):
         self.logger.info(f"Roll: {np.degrees(orientation[0]):.1f}°, "
                          f"Pitch: {np.degrees(orientation[1]):.1f}°")
 
+        # Check termination conditions
         if position[2] < 0.02:
             self.logger.info("Terminated: Too low")
             return True
